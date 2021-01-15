@@ -1,6 +1,8 @@
-import ctypes
-from datetime import timedelta, datetime
+import time
+
 import pandas as pd
+import numpy as np
+
 from connections import replication
 
 pd.set_option('display.max_columns', 29)
@@ -9,58 +11,53 @@ pd.set_option('display.max_columns', 29)
 def sql(who):
 
     return f'''select he.name
-                      ,(ha.check_in at time zone 'utc' at time zone 'nz') check_in
-                      ,(ha.check_out at time zone 'utc' at time zone 'nz') check_out
-                      ,date(ha.check_in at time zone 'utc' at time zone 'nz') date
-                      ,he.pin pin
+                      , to_char(
+                           (ha.check_in at time zone 'utc' at time zone 'nz')
+                           , 'HH24:MM:DD'
+                        ) check_in
+                      , to_char(
+                            coalesce( ha.check_out at time zone 'utc' at time zone 'nz'
+                                , substring( (now() at time zone 'nz')::text
+                                    , '(^.+)\.'
+                                )::timestamp
+                                )
+                             , 'HH24:MM:DD'
+                        ) check_out
+                      , extract(
+                            epoch from (check_out - check_in )
+                            )/3600 - worked_hours = 0 "QC"
+                      , case when ha.check_out is null then 'working'
+                             else 'OK'
+                         end status
+                      , ( coalesce( ha.check_out at time zone 'utc' at time zone 'nz'
+                          , substring( (now() at time zone 'nz')::text
+                                , '(^.+)\.'
+                            )::timestamp
+                         ) - (ha.check_in at time zone 'utc' at time zone 'nz') ) hours
+
+                      , date(ha.check_in at time zone 'utc' at time zone 'nz') date
+                      , to_char(
+                            date(ha.check_in at time zone 'utc' at time zone 'nz')
+                            , 'IYYY-IW'
+                        ) week
+                        
                  from hr_attendance ha
                       left join hr_employee he on ha.employee_id = he.id
+
                 where he.name ~* '{who}'
+
                 order by ha.id desc
-                limit 100'''
-
-def fake_strftime(td):
     '''
-    Td stands for timedelta.
-
-    '''
-    tds = td.total_seconds()
-    hours, remainder = divmod(tds, 3600)
-    minutes, seconds = divmod(remainder, 60)
-    hehe = f'{hours:.0f}:{minutes:2.0f}:{seconds:2.0f}'#, int(minutes), int(seconds))'
-    return hehe
-
 
 who = str(input('')) or 'rick'
 df = pd.read_sql(sql(who), replication)
 
-print(df.head(10))
-
-# If in the top row, check out is blank, then your time is making money.
-if df.check_out.isna()[0]:
-    msg = 'wow you are making a fortune'
-else:
-    msg = 'what are you looking at?'
-
-
-df = df.fillna(datetime.now())
-df['hours'] = df['check_out'] - df['check_in']
-df['week'] = df['check_in'].dt.week
-
+print(df.head())
 weekly_hours = df.groupby(['name','week']).hours.sum().reset_index()
-weekly_hours['hours'] = weekly_hours['hours'].map(fake_strftime)
+
+weekly_hours['hours'] = round(weekly_hours['hours']/np.timedelta64(1, 'h'), 2)
 
 print()
 print(weekly_hours.tail(2))
 
-daily_hours = df.groupby(['name','date']).hours.sum().reset_index()
-daily_hours['hours'] = daily_hours['hours'].map(fake_strftime)
-
-print(daily_hours.tail(2))
-
-ctypes.windll.user32.MessageBoxW(
-    0,
-    msg,
-    who,
-    1,
-)
+time.sleep(5)
