@@ -10,54 +10,62 @@ pd.set_option('display.max_columns', 29)
 # It takes a string as argument and returns a string, which is a sql statement.
 def sql(who):
 
-    return f'''select he.name
+    return f'''with t as (
+
+               select attendance.id attendance_id
+                      , employee.name
                       , to_char(
-                           (ha.check_in at time zone 'utc' at time zone 'nz')
+                           (attendance.check_in at time zone 'utc' at time zone 'nz')
                            , 'HH24:MM:DD'
                         ) check_in
-                      , to_char(
-                            coalesce( ha.check_out at time zone 'utc' at time zone 'nz'
-                                , substring( (now() at time zone 'nz')::text
-                                    , '(^.+)\.'
-                                )::timestamp
-                                )
-                             , 'HH24:MM:DD'
+                      , substring( 
+                            coalesce (
+                                ( attendance.check_out at time zone 'utc' at time zone 'nz')::text
+                                , (now() at time zone 'utc' at time zone 'utc' at time zone 'nz')::text
+                            )
+                            , '..:..:..'
                         ) check_out
                       , extract(
-                            epoch from (check_out - check_in )
+                            epoch from (attendance.check_out - attendance.check_in )
                             )/3600 - worked_hours = 0 "QC"
-                      , case when ha.check_out is null then 'working'
+                      , case when attendance.check_out is null then 'working'
                              else 'OK'
                          end status
-                      , ( coalesce( ha.check_out at time zone 'utc' at time zone 'nz'
-                          , substring( (now() at time zone 'nz')::text
-                                , '(^.+)\.'
-                            )::timestamp
-                         ) - (ha.check_in at time zone 'utc' at time zone 'nz') ) hours
+                      , round(
+                            extract(
+                                epoch from (
+                                    coalesce( attendance.check_out, now() at time zone 'utc')
+                                        - (attendance.check_in)
+                                    )/3600 )::numeric
+                            , 2
+                        ) hours
 
-                      , date(ha.check_in at time zone 'utc' at time zone 'nz') date
+                      , date(attendance.check_in at time zone 'utc' at time zone 'nz') a_date
                       , to_char(
-                            date(ha.check_in at time zone 'utc' at time zone 'nz')
+                            date(attendance.check_in at time zone 'utc' at time zone 'nz')
                             , 'IYYY-IW'
-                        ) week
+                        ) a_week
                         
-                 from hr_attendance ha
-                      left join hr_employee he on ha.employee_id = he.id
+                 from hr_attendance attendance
+                      left join hr_employee employee on attendance.employee_id = employee.id
 
-                where he.name ~* '{who}'
+                where employee.name ~* '{who}'
 
-                order by ha.id desc
+                order by attendance.id desc
+
+              )
+
+              select *
+                     , sum(hours) over(partition by a_date order by attendance_id) hours_of_day
+                     , sum(hours) over(partition by a_week order by attendance_id) hours_of_week
+                from t
+               order by a_date desc, attendance_id desc
     '''
 
 who = str(input('')) or 'rick'
 df = pd.read_sql(sql(who), replication)
 
-print(df.head())
-weekly_hours = df.groupby(['name','week']).hours.sum().reset_index()
-
-weekly_hours['hours'] = round(weekly_hours['hours']/np.timedelta64(1, 'h'), 2)
-
+print(df.head(10))
 print()
-print(weekly_hours.tail(2))
 
 time.sleep(5)
