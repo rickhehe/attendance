@@ -14,9 +14,13 @@ def sql(who):
 
                select attendance.id attendance_id
                       , employee.name
-                      , to_char(
-                           (attendance.check_in at time zone 'utc' at time zone 'nz')
-                           , 'HH24:MM:DD'
+--                      , to_char(
+--                           (attendance.check_in at time zone 'utc' at time zone 'nz')
+--                           , 'HH24:MM:DD'
+--                        ) check_in
+                      , substring(
+                            (attendance.check_in at time zone 'utc' at time zone 'nz')::text
+                            , '..:..:..'
                         ) check_in
                       , substring( 
                             coalesce (
